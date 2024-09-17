@@ -3,6 +3,7 @@ import streamlit as st
 import requests
 from io import BytesIO
 from datetime import datetime, timedelta
+from streamlit_js_eval import streamlit_js_eval  # Importação do streamlit-js-eval
 
 # URL da logo do LAMMA para cabeçalho do app
 LOGO_LAMMA_URL_HEADER = "https://lamma.com.br/wp-content/uploads/2024/08/lammapy-removebg-preview.png"
@@ -37,53 +38,48 @@ def obter_dados_nasa(latitude, longitude, data_inicio, data_fim):
     else:
         return None
 
-# Função para criar a planilha com as descrições das variáveis
-def criar_planilha_descricoes():
-    descricoes = {
-        "Variável": ["P", "UR", "Tmed", "Tmax", "Tmin", "Tdew", "U2", "U2max", "U2min", "Qg", "Qo"],
-        "Descrição": [
-            "Precipitação acumulada (mm)",
-            "Umidade relativa ao nível de 2 metros (%)",
-            "Temperatura média diária (°C)",
-            "Temperatura máxima diária (°C)",
-            "Temperatura mínima diária (°C)",
-            "Temperatura do ponto de orvalho ao nível de 2 metros (°C)",
-            "Velocidade média do vento a 2 metros (m/s)",
-            "Velocidade máxima do vento a 2 metros (m/s)",
-            "Velocidade mínima do vento a 2 metros (m/s)",
-            "Radiação solar incidente na superfície terrestre (W/m²)",
-            "Radiação solar em condições de céu claro (W/m²)"
-        ]
-    }
-    df_descricoes = pd.DataFrame(descricoes)
-    return df_descricoes
-
-# Função para obter a localização atual do usuário via IP (usando ipinfo.io)
-def obter_localizacao_ip():
-    url = "https://ipinfo.io"
-    response = requests.get(url)
-    if response.status_code == 200:
-        location_data = response.json()
-        latitude, longitude = map(float, location_data['loc'].split(','))
-        return latitude, longitude
-    else:
-        st.error(f"Erro ao obter a localização: {response.status_code}")
-        return None, None
+# Função para obter a geolocalização do usuário via navegador
+def obter_localizacao_navegador():
+    loc = streamlit_js_eval(js_expressions="navigator.geolocation.getCurrentPosition((pos) => {return {latitude: pos.coords.latitude, longitude: pos.coords.longitude}})", key="loc")
+    return loc
 
 # Interface do Streamlit
 # Adiciona a logo do LAMMA no topo do app
 st.image(LOGO_LAMMA_URL_HEADER, use_column_width=True)
 
+# Informações sobre o laboratório
+st.subheader("Aplicativo desenvolvido pelo LAMMA - Laboratório de Máquinas e Mecanização Agrícola da UNESP/Jaboticabal")
+
 st.title("NASA POWER - Download de Dados Climáticos")
 
-# Botão para obter localização atual (posicionado antes dos inputs de latitude e longitude)
-if st.button("Usar localização atual"):
-    lat_atual, lon_atual = obter_localizacao_ip()
-    if lat_atual and lon_atual:
-        st.session_state['latitude'] = lat_atual
-        st.session_state['longitude'] = lon_atual
+# Barra lateral com informações e explicações
+st.sidebar.title("Informações sobre o App")
+st.sidebar.image(LOGO_NASA_POWER_URL_SIDEBAR, use_column_width=True)
 
-# Input para latitude e longitude com valores atualizados após o uso da localização atual
+st.sidebar.write("""
+### Importância dos Dados Climáticos:
+- Os dados climáticos são fundamentais para o planejamento agrícola, monitoramento ambiental e gestão de recursos naturais.
+- O acesso a informações sobre temperatura, precipitação, umidade e radiação solar ajuda a entender padrões climáticos e otimizar atividades no campo.
+
+### Objetivo do Aplicativo:
+- Este aplicativo oferece uma maneira simples e prática de obter dados climáticos de qualquer local do mundo, utilizando as coordenadas geográficas e o período selecionado pelo usuário.
+- O aplicativo permite baixar os dados diretamente em formato Excel, facilitando a análise e integração com outros sistemas.
+
+### Sobre o NASA POWER:
+- O **NASA POWER** (Prediction of Worldwide Energy Resources) é um sistema que fornece dados climáticos históricos e atuais a partir de satélites da NASA.
+""")
+
+# Botão para usar localização atual do usuário, acima dos campos de coordenadas
+if st.button("Usar minha localização"):
+    localizacao = obter_localizacao_navegador()
+    if localizacao:
+        st.session_state['latitude'] = localizacao["latitude"]
+        st.session_state['longitude'] = localizacao["longitude"]
+        st.success(f"Localização definida: Latitude {localizacao['latitude']}, Longitude {localizacao['longitude']}")
+    else:
+        st.error("Não foi possível obter a localização.")
+
+# Inputs para latitude e longitude
 latitude = st.number_input("Latitude", format="%.6f", value=st.session_state.get('latitude', -21.7946))
 longitude = st.number_input("Longitude", format="%.6f", value=st.session_state.get('longitude', -48.1766))
 
@@ -98,23 +94,25 @@ data_fim = st.date_input("Data de fim", value=hoje, min_value=data_inicio, max_v
 data_inicio_formatada = data_inicio.strftime("%Y%m%d")
 data_fim_formatada = data_fim.strftime("%Y%m%d")
 
-# Botão para executar a busca
+# Botão para buscar dados
 if st.button("Buscar dados"):
-    # Chama a função para obter os dados
-    dados = obter_dados_nasa(latitude, longitude, data_inicio_formatada, data_fim_formatada)
-    df_descricoes = criar_planilha_descricoes()
+    st.session_state['dados'] = obter_dados_nasa(latitude, longitude, data_inicio_formatada, data_fim_formatada)
     
-    if dados is not None:
-        # Exibe os dados na tabela
-        st.write(dados)
+    if st.session_state['dados'] is not None:
+        st.success("Dados obtidos com sucesso!")
+        st.write(st.session_state['dados'])
         
-        # Opção para download dos dados e da planilha de descrições em Excel
+        # Permitir download dos dados em formato Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            dados.to_excel(writer, sheet_name="Dados_Climaticos", index=False)
-            df_descricoes.to_excel(writer, sheet_name="Descrições", index=False)
+            st.session_state['dados'].to_excel(writer, sheet_name="Dados_Climaticos", index=False)
         output.seek(0)
-        
-        st.download_button(label="Baixar em Excel", data=output, file_name="dados_climaticos_com_descricoes.xlsx")
+
+        st.download_button(
+            label="Baixar dados como Excel",
+            data=output,
+            file_name="dados_climaticos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.error("Erro ao buscar dados da NASA POWER")
